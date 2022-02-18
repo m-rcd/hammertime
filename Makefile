@@ -9,6 +9,9 @@ test: ## Run tests
 .PHONY: docs
 docs: ## Update the readme help docs
 
+.PHONY: gen
+	go generate ./...
+
 .PHONY: help
 help:  ## Display this help. Thanks to https://www.thapaliya.com/en/writings/well-documented-makefiles/
 ifeq ($(OS),Windows_NT)
