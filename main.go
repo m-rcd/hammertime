@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,13 +9,12 @@ import (
 	"log"
 	"os"
 
+	"github.com/Callisto13/hammertime/pkg/client"
 	"github.com/Callisto13/hammertime/pkg/utils"
 	"github.com/urfave/cli/v2"
-	"gopkg.in/yaml.v2"
 
 	"github.com/weaveworks/flintlock/api/services/microvm/v1alpha1"
 	"github.com/weaveworks/flintlock/api/types"
-	"github.com/weaveworks/flintlock/client/cloudinit"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
@@ -99,7 +97,9 @@ func main() {
 					}
 					defer conn.Close()
 
-					res, err := createMicrovm(v1alpha1.NewMicroVMClient(conn), mvmName, mvmNamespace, sshKeyPath, jsonSpec)
+					client := client.New(v1alpha1.NewMicroVMClient(conn))
+
+					res, err := client.Create(mvmName, mvmNamespace, jsonSpec, sshKeyPath)
 					if err != nil {
 						return err
 					}
@@ -222,7 +222,7 @@ func main() {
 					},
 				},
 				Action: func(c *cli.Context) error {
-					if jsonSpec != "" {
+					if utils.IsSet(jsonSpec) {
 						spec, err := loadSpecFromFile(jsonSpec)
 						if err != nil {
 							return err
@@ -236,14 +236,14 @@ func main() {
 					}
 					defer conn.Close()
 
-					if (isSet(mvmName) || isSet(mvmNamespace)) && !deleteAll {
+					if (utils.IsSet(mvmName) || utils.IsSet(mvmNamespace)) && !deleteAll {
 						// TODO: this is temporary while https://github.com/Callisto13/hammertime/issues/15
 						// is waiting. I did not want to do 2 things at once here.
 						return errors.New("required: --all")
 					}
 
 					if deleteAll {
-						if isSet(mvmName) && !isSet(mvmNamespace) {
+						if utils.IsSet(mvmName) && !utils.IsSet(mvmNamespace) {
 							return errors.New("required: --namespace")
 						}
 
@@ -289,39 +289,6 @@ func prettyPrint(response interface{}) error {
 	return nil
 }
 
-func isSet(flag string) bool {
-	return flag != ""
-}
-
-func createMicrovm(client v1alpha1.MicroVMClient, name, ns, sshPath, jsonSpec string) (*v1alpha1.CreateMicroVMResponse, error) {
-	var (
-		mvm *types.MicroVMSpec
-		err error
-	)
-
-	if jsonSpec != "" {
-		mvm, err = loadSpecFromFile(jsonSpec)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		mvm, err = defaultMicroVM(name, ns, sshPath)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	createReq := v1alpha1.CreateMicroVMRequest{
-		Microvm: mvm,
-	}
-	resp, err := client.CreateMicroVM(context.Background(), &createReq)
-	if err != nil {
-		return nil, err
-	}
-
-	return resp, nil
-}
-
 func getMicrovm(client v1alpha1.MicroVMClient, uid string) (*v1alpha1.GetMicroVMResponse, error) {
 	getReq := v1alpha1.GetMicroVMRequest{
 		Uid: uid,
@@ -357,113 +324,6 @@ func listMicrovms(client v1alpha1.MicroVMClient, name, ns string) (*v1alpha1.Lis
 	}
 
 	return resp, nil
-}
-
-func defaultMicroVM(name, namespace, sshPath string) (*types.MicroVMSpec, error) {
-	var (
-		kernelImage = "ghcr.io/weaveworks/flintlock-kernel:5.10.77"
-		cloudImage  = "ghcr.io/weaveworks/capmvm-kubernetes:1.21.8"
-	)
-
-	metaData, err := createMetadata(name, namespace)
-	if err != nil {
-		return nil, err
-	}
-	userData, err := createUserData(name, sshPath)
-	if err != nil {
-		return nil, err
-	}
-
-	return &types.MicroVMSpec{
-		Id:         name,
-		Namespace:  namespace,
-		Vcpu:       2,
-		MemoryInMb: 2048,
-		Kernel: &types.Kernel{
-			Image:            kernelImage,
-			Filename:         utils.PointyString("boot/vmlinux"),
-			AddNetworkConfig: true,
-		},
-		RootVolume: &types.Volume{
-			Id:         "root",
-			IsReadOnly: false,
-			MountPoint: "/",
-			Source: &types.VolumeSource{
-				ContainerSource: utils.PointyString(cloudImage),
-			},
-		},
-		Interfaces: []*types.NetworkInterface{
-			{
-				DeviceId: "eth1",
-				Type:     0,
-			},
-		},
-		Metadata: map[string]string{
-			"meta-data": metaData,
-			"user-data": userData,
-		},
-	}, nil
-}
-
-func createUserData(name, sshPath string) (string, error) {
-	defaultUser := cloudinit.User{
-		Name: "root",
-	}
-
-	if sshPath != "" {
-		sshKey, err := getKeyFromPath(sshPath)
-		if err != nil {
-			return "", err
-		}
-		defaultUser.SSHAuthorizedKeys = []string{
-			sshKey,
-		}
-	}
-
-	// TODO: remove the boot command temporary fix after image-builder #6
-	userData := &cloudinit.UserData{
-		HostName: name,
-		Users: []cloudinit.User{
-			defaultUser,
-		},
-		FinalMessage: "The Liquid Metal booted system is good to go after $UPTIME seconds",
-		BootCommands: []string{
-			"ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf",
-		},
-	}
-
-	data, err := yaml.Marshal(userData)
-	if err != nil {
-		return "", fmt.Errorf("marshalling bootstrap data: %w", err)
-	}
-
-	dataWithHeader := append([]byte("#cloud-config\n"), data...)
-
-	return base64.StdEncoding.EncodeToString(dataWithHeader), nil
-}
-
-func createMetadata(name, ns string) (string, error) {
-	userMetadata := cloudinit.Metadata{
-		InstanceID:    fmt.Sprintf("%s/%s", ns, name),
-		LocalHostname: name,
-		Platform:      "liquid_metal",
-	}
-
-	userMeta, err := yaml.Marshal(userMetadata)
-	if err != nil {
-		return "", fmt.Errorf("unable to marshal metadata: %w", err)
-	}
-
-	return base64.StdEncoding.EncodeToString(userMeta), nil
-}
-
-func getKeyFromPath(path string) (string, error) {
-	key, err := ioutil.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-
-	return string(key), nil
 }
 
 func loadSpecFromFile(file string) (*types.MicroVMSpec, error) {
