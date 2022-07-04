@@ -23,6 +23,18 @@ func CLIFlags(options ...WithFlagsFunc) []cli.Flag {
 	return flags
 }
 
+// TODO add basic auth token flag, add flag to each command
+func WithBasicAuthToken() WithFlagsFunc {
+	return func() []cli.Flag {
+		return []cli.Flag{
+			&cli.StringFlag{
+				Name:  "basic-auth-token",
+				Usage: "base64 encoded token for basic auth",
+			},
+		}
+	}
+}
+
 // WithGRPCAddressFlag adds the flintlock GRPC address flag to the command.
 func WithGRPCAddressFlag() WithFlagsFunc {
 	return func() []cli.Flag {
@@ -122,6 +134,7 @@ func WithAllFlag() WithFlagsFunc {
 	}
 }
 
+// TODO add basic auth here
 // ParseFlags processes all flags on the CLI context and builds a config object
 // which will be used in the command's action.
 func ParseFlags(cfg *config.Config) cli.BeforeFunc {

@@ -29,6 +29,7 @@ func createCommand() *cli.Command {
 			flags.WithNameAndNamespaceFlags(),
 			flags.WithJSONSpecFlag(),
 			flags.WithSSHKeyFlag(),
+			flags.WithBasicAuthToken(),
 		),
 		Action: func(c *cli.Context) error {
 			return CreateFn(cfg)

@@ -24,6 +24,8 @@ type Config struct {
 	UUID string
 
 	ClientConfig
+
+	// TODO add auth config
 }
 
 type ClientConfig struct {

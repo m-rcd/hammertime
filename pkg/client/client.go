@@ -31,7 +31,8 @@ type FlintlockClient interface {
 
 // New returns a new flintlock Client.
 func New(address string) (FlintlockClient, error) {
-	conn, err := dialler.New(address)
+	// TODO remove hardcoding, build auth opts struct
+	conn, err := dialler.New(address, "foobar")
 	if err != nil {
 		return nil, err
 	}
